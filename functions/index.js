@@ -143,3 +143,9 @@ exports.updateTokens = functions.pubsub.schedule(cron).onRun(() => {
   })
 })
 console.log(`-- Sheduled update E-Com Plus tokens '${cron}'`)
+
+const checkTracking = require('./lib/integration/check-tracking')
+const trackingCron = '*/3 * * * *'
+exports.trackingSync = functions.runWith({ timeoutSeconds: 120 })
+  .pubsub.schedule(trackingCron).onRun(checkTracking)
+console.log(`-- Sheduled active tracking from SuperFrete API '${trackingCron}'`)

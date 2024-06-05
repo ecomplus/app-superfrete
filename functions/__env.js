@@ -17,5 +17,6 @@ module.exports = {
   hostingUri: `https://${projectId}.web.app`,
   pkg: {
     ...pkg
-  }
+  },
+  isSandbox: false // TODO: false
 }

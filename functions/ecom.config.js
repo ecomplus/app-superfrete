@@ -7,8 +7,8 @@
 
 const app = {
   app_id: 130265,
-  title: 'My Awesome E-Com Plus App',
-  slug: 'my-awesome-app',
+  title: 'Superfrete',
+  slug: 'superfrete',
   type: 'external',
   state: 'active',
   authentication: true,
@@ -22,7 +22,7 @@ const app = {
      * Triggered to calculate shipping options, must return values and deadlines.
      * Start editing `routes/ecom/modules/calculate-shipping.js`
      */
-    // calculate_shipping:   { enabled: true },
+    calculate_shipping:   { enabled: true },
 
     /**
      * Triggered to validate and apply discount value, must return discount and conditions.
@@ -82,9 +82,9 @@ const app = {
       // 'DELETE',        // Delete customers
     ],
     orders: [
-      // 'GET',           // List/read orders with public and private fields
+      'GET',           // List/read orders with public and private fields
       // 'POST',          // Create orders
-      // 'PATCH',         // Edit orders
+      'PATCH',         // Edit orders
       // 'PUT',           // Overwrite orders
       // 'DELETE',        // Delete orders
     ],
@@ -100,9 +100,13 @@ const app = {
      * Prefer using 'fulfillments' and 'payment_history' subresources to manipulate update order status.
      */
     'orders/fulfillments': [
-      // 'GET',           // List/read order fulfillment and tracking events
-      // 'POST',          // Create fulfillment event with new status
+      'GET',           // List/read order fulfillment and tracking events
+      'POST',          // Create fulfillment event with new status
       // 'DELETE',        // Delete fulfillment event
+    ],
+    'orders/shipping_lines': [
+      'GET',              // List/read order shipping lines
+      'PATCH',            // Edit order shipping line nested object
     ],
     'orders/payments_history': [
       // 'GET',           // List/read order payments history events
@@ -138,37 +142,229 @@ const app = {
   },
 
   admin_settings: {
-    /**
-     * JSON schema based fields to be configured by merchant and saved to app `data` / `hidden_data`, such as:
-
-     webhook_uri: {
-       schema: {
-         type: 'string',
-         maxLength: 255,
-         format: 'uri',
-         title: 'Notifications URI',
-         description: 'Unique notifications URI available on your Custom App dashboard'
-       },
-       hide: true
-     },
-     token: {
-       schema: {
-         type: 'string',
-         maxLength: 50,
-         title: 'App token'
-       },
-       hide: true
-     },
-     opt_in: {
-       schema: {
-         type: 'boolean',
-         default: false,
-         title: 'Some config option'
-       },
-       hide: false
-     },
-
-     */
+    zip: {
+      schema: {
+        type: 'string',
+        maxLength: 9,
+        pattern: '^[0-9]{5}-?[0-9]{3}$',
+        title: 'CEP de origem',
+        description: 'Código postal do remetente para cálculo do frete'
+      },
+      hide: true
+    },
+    token: {
+      schema: {
+        type: 'string',
+        title: 'Token',
+        description: 'Token da Integração do Superfrete. (disponivél em: https://web.superfrete.com/#/integrations)'
+      },
+      hide: true
+    },
+    enable_tag: {
+      schema: {
+        type: 'boolean',
+        default: true,
+        title: 'Ativar envio de pedido para Superfrete',
+        description: 'Pedido será enviado quando o status mudar para Em Separação'
+      },
+      hide: false
+    },
+    use_bigger_box: {
+      schema: {
+        type: 'boolean',
+        default: false,
+        title: 'Calcular considerando apenas uma caixa',
+        description: 'Se selecionado o pacote irá consideradar o maior valor de cada dimensão entre os itens'
+      },
+      hide: false
+    },
+    no_declare_value: {
+      'schema': {
+        'type': 'boolean',
+        'default': false,
+        'title': 'Desabilitar declaração de valor',
+        description: 'Ao selecionado, não será declarado valor do pedido'
+      },
+      hide: false
+    },
+    posting_deadline: {
+      schema: {
+        title: 'Prazo de postagem',
+        type: 'object',
+        required: ['days'],
+        additionalProperties: false,
+        properties: {
+          days: {
+            type: 'integer',
+            minimum: 0,
+            maximum: 999999,
+            title: 'Número de dias',
+            description: 'Dias de prazo para postar os produtos após a compra'
+          },
+          working_days: {
+            type: 'boolean',
+            default: true,
+            title: 'Dias úteis'
+          },
+          after_approval: {
+            type: 'boolean',
+            default: true,
+            title: 'Após aprovação do pagamento'
+          }
+        }
+      },
+      hide: false
+    },
+    shipping_rules: {
+      schema: {
+        title: 'Regras de envio',
+        description: 'Aplicar descontos/adicionais condicionados ou desabilitar regiões',
+        type: 'array',
+        maxItems: 300,
+        items: {
+          title: 'Regra de envio',
+          type: 'object',
+          minProperties: 1,
+          properties: {
+            label: {
+              type: 'string',
+              maxLength: 255,
+              title: 'Rótulo',
+              description: 'Título (opcional) da regra de envio apenas para controle interno'
+            },
+            service: {
+              type: 'string',
+              enum: [
+                '',
+                'PAC',
+                'SEDEX',
+                'Mini Envios',
+                'Todos'
+              ],
+              default: '',
+              title: 'Tipo do serviço'
+            },
+            zip_range: {
+              title: 'Faixa de CEP',
+              type: 'object',
+              required: [
+                'min',
+                'max'
+              ],
+              properties: {
+                min: {
+                  type: 'integer',
+                  minimum: 10000,
+                  maximum: 999999999,
+                  title: 'CEP inicial'
+                },
+                max: {
+                  type: 'integer',
+                  minimum: 10000,
+                  maximum: 999999999,
+                  title: 'CEP final'
+                }
+              }
+            },
+            min_amount: {
+              type: 'number',
+              minimum: 1,
+              maximum: 999999999,
+              title: 'Valor mínimo da compra'
+            },
+            free_shipping: {
+              type: 'boolean',
+              default: false,
+              title: 'Frete grátis'
+            },
+            discount: {
+              title: 'Desconto',
+              type: 'object',
+              required: [
+                'value'
+              ],
+              properties: {
+                type: {
+                  type: 'string',
+                  enum: [
+                    'Percentual',
+                    'Percentual no subtotal',
+                    'Fixo'
+                  ],
+                  default: 'Fixo',
+                  title: 'Tipo de desconto',
+                  description: 'Desconto/acréscimo com valor percentual ou fixo'
+                },
+                value: {
+                  type: 'number',
+                  minimum: -99999999,
+                  maximum: 99999999,
+                  title: 'Valor do desconto',
+                  description: 'Valor percentual/fixo do desconto ou acréscimo (negativo)'
+                }
+              }
+            },
+            fixed: {
+              type: 'number',
+              minimum: 1,
+              maximum: 999999999,
+              title: 'Valor fixo do frete'
+            }
+          }
+        }
+      },
+      hide: false
+    },
+    disable_services: {
+      schema: {
+        title: 'Desabilitar serviços',
+        description: 'Desabilitar serviços de envio por cep',
+        type: 'array',
+        maxItems: 300,
+        items: {
+          title: 'Regra de envio',
+          type: 'object',
+          minProperties: 1,
+          properties: {
+            service: {
+              type: 'string',
+              enum: [
+                '',
+                'PAC',
+                'SEDEX',
+                'Mini Envios',
+                'Todos'
+              ],
+              default: '',
+              title: 'Tipo do serviço'
+            },
+            zip_range: {
+              title: 'Faixa de CEP',
+              type: 'object',
+              required: [
+                'min',
+                'max'
+              ],
+              properties: {
+                min: {
+                  type: 'integer',
+                  minimum: 10000,
+                  maximum: 999999999,
+                  title: 'CEP inicial'
+                },
+                max: {
+                  type: 'integer',
+                  minimum: 10000,
+                  maximum: 999999999,
+                  title: 'CEP final'
+                }
+              }
+            }
+          }
+        }
+      },
+      hide: false
+    },
   }
 }
 
@@ -181,6 +377,7 @@ const procedures = []
 
 /**
  * Uncomment and edit code above to configure `triggers` and receive respective `webhooks`:
+ * */
 
 const { baseUri } = require('./__env')
 
@@ -191,42 +388,16 @@ procedures.push({
     // Receive notifications when new order is created:
     {
       resource: 'orders',
-      action: 'create',
-    },
-
-    // Receive notifications when order financial/fulfillment status are set or changed:
-    // Obs.: you probably SHOULD NOT enable the orders triggers below and the one above (create) together.
-    {
-      resource: 'orders',
-      field: 'financial_status',
+      field: 'invoices'
     },
     {
       resource: 'orders',
       field: 'fulfillment_status',
     },
-
-    // Receive notifications when products/variations stock quantity changes:
     {
-      resource: 'products',
-      field: 'quantity',
-    },
-    {
-      resource: 'products',
-      subresource: 'variations',
-      field: 'quantity'
-    },
-
-    // Receive notifications when cart is edited:
-    {
-      resource: 'carts',
-      action: 'change',
-    },
-
-    // Receive notifications when customer is deleted:
-    {
-      resource: 'customers',
-      action: 'delete',
-    },
+      resource: 'orders',
+      field: 'status',
+    }
 
     // Feel free to create custom combinations with any Store API resource, subresource, action and field.
   ],
@@ -243,6 +414,7 @@ procedures.push({
   ]
 })
 
+/*
  * You may also edit `routes/ecom/webhook.js` to treat notifications properly.
  */
 
