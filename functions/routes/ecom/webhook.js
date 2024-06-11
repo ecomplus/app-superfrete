@@ -134,9 +134,22 @@ exports.post = ({ appSdk }, req, res) => {
       const shippingLine = shippingLines && shippingLines[0]
 
       const isInSeparation = fulfillmentStatus && fulfillmentStatus.current === 'in_separation'
+      const shippingStatus = fulfillmentStatus && fulfillmentStatus.current
+      const parseShippingStatus = (_statusShipping) => {
+        switch (_statusShipping) {
+          case 'invoice_issued':
+            return 'NF Emitida'
+          case 'in_production':
+            return 'Em produção'
+          case 'in_separation':
+            return 'Em Separação'
+          default:
+            return _statusShipping
+        }
+      }
 
-      if (doc && status === 'cancelled' && !['ready_for_shipping', 'shipped', 'delivered'].includes(fulfillmentStatus.current)) {
-        console.log('Try Cancell in Superfrete')
+      if (doc && status === 'cancelled' && !['ready_for_shipping', 'shipped', 'delivered'].includes(shippingStatus)) {
+        console.log('> Try Cancell in Superfrete')
         const docSnapshot = await getFirestore().doc(docId)
           .get()
         const doc = docSnapshot.data()
@@ -157,9 +170,9 @@ exports.post = ({ appSdk }, req, res) => {
         })
 
         return res.send(ECHO_SUCCESS)
-      } else if (!doc && isInSeparation && status !== 'cancelled') {
+      } else if (!doc && shippingStatus && status !== 'cancelled') {
         // create in superfrete and insert in firebase
-        if (appData.enable_tag) {
+        if ((appData.enable_tag && isInSeparation) || appData.status_send_order === parseShippingStatus(shippingStatus)) {
           const store = await appSdk.apiRequest(storeId, '/stores/me.json', 'GET', null, auth)
             .then(({ response }) => {
               const _store = {}
@@ -228,7 +241,7 @@ exports.post = ({ appSdk }, req, res) => {
             body.options.invoice = { number, key }
           }
 
-          console.log('>> try ', JSON.stringify(body))
+          console.log('>> Try ', JSON.stringify(body))
           const { data } = await superfreteApi.post('/cart', body)
             .then(({ data }) => {
               const id = data.id
