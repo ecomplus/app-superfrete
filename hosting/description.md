@@ -1,3 +1,3 @@
-# My Awesome E-Com Plus App
+# Superfrete
 
-Somethings about my app and what it does...
+Venda mais com fretes até 80% mais baratos com a SuperFrete: sem mensalidades ou taxas escondidas
