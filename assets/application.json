@@ -60,12 +60,17 @@
       },
       "hide": true
     },
-    "enable_tag": {
+    "status_send_order": {
       "schema": {
-        "type": "boolean",
-        "default": true,
-        "title": "Ativar envio de pedido para Superfrete",
-        "description": "Pedido será enviado quando o status mudar para Em Separação"
+        "type": "string",
+        "enum": [
+          "NF Emitida",
+          "Em produção",
+          "Em Separação"
+        ],
+        "default": "Em Separação",
+        "title": "Selecionar status para envio de pedido ao Superfrete ",
+        "description": "Pedido será enviado quando o status mudar para status selecionado (Padrão: Em Separação)"
       },
       "hide": false
     },
