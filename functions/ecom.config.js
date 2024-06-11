@@ -398,8 +398,6 @@ procedures.push({
       resource: 'orders',
       field: 'status',
     }
-
-    // Feel free to create custom combinations with any Store API resource, subresource, action and field.
   ],
 
   webhooks: [
