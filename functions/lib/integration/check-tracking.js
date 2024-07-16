@@ -28,8 +28,7 @@ const parseStatus = (status) => {
 const listStoreIds = async () => {
   const storeIds = []
   const date = new Date()
-  date.setHours(date.getHours() - 72)
-
+  date.setHours(date.getHours() - 48)
   return getFirestore()
     .collection('ecomplus_app_auth')
     .where('updated_at', '>', Timestamp.fromDate(date))
