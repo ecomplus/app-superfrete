@@ -167,10 +167,11 @@ const app = {
           'NF Emitida',
           'Em produção',
           'Em Separação',
+          'Pronto Para Envio',
         ],
-        default: 'Em Separação',
+        default: 'Pronto Para Envio',
         title: 'Selecionar status para envio de pedido ao Superfrete ',
-        description: 'Pedido será enviado quando o status mudar para status selecionado (Padrão: Em Separação)'
+        description: 'Pedido será enviado quando o status mudar para status selecionado (Padrão: Pronto Para Envio)'
       },
       hide: false
     },
@@ -398,10 +399,6 @@ procedures.push({
     {
       resource: 'orders',
       field: 'fulfillment_status',
-    },
-    {
-      resource: 'orders',
-      field: 'status',
     }
   ],
 

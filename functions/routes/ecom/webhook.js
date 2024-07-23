@@ -143,12 +143,14 @@ exports.post = ({ appSdk }, req, res) => {
             return 'Em produção'
           case 'in_separation':
             return 'Em Separação'
+          case 'ready_for_shipping':
+            return 'Pronto Para Envio'
           default:
             return _statusShipping
         }
       }
 
-      if (doc && status === 'cancelled' && !['ready_for_shipping', 'shipped', 'delivered'].includes(shippingStatus)) {
+      if (doc && status === 'cancelled' && !['shipped', 'delivered'].includes(shippingStatus)) {
         console.log('> Try Cancell in Superfrete')
         const docSnapshot = await getFirestore().doc(docId)
           .get()
