@@ -16,7 +16,7 @@
     "@ecomplus/utils": "^1.4.1",
     "@google-cloud/firestore": "^7.11.0",
     "axios": "^1.8.4",
-    "express": "^4.21.2",
+    "express": "^5.1.0",
     "firebase-admin": "^11.11.1",
     "firebase-functions": "^4.9.0"
   },
