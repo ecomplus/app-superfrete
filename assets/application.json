@@ -56,7 +56,7 @@
       "schema": {
         "type": "string",
         "title": "Token",
-        "description": "Token da Integração do Superfrete. (disponivél em: https://web.superfrete.com/#/integrations)"
+        "description": "Token da Integração do Superfrete. (disponível em: https://web.superfrete.com/#/integrations)"
       },
       "hide": true
     },
@@ -72,6 +72,31 @@
         "default": "Pronto Para Envio",
         "title": "Selecionar status para envio de pedido ao Superfrete ",
         "description": "Pedido será enviado quando o status mudar para status selecionado (Padrão: Pronto Para Envio)"
+      },
+      "hide": false
+    },
+    "services": {
+      "schema": {
+        "type": "array",
+        "title": "Serviços habilitados",
+        "description": "Serviços cotados no Superfrete. Jadlog, Loggi e J&T exigem postagem em ponto da transportadora próximo ao CEP de origem.",
+        "uniqueItems": true,
+        "items": {
+          "type": "string",
+          "enum": [
+            "PAC",
+            "SEDEX",
+            "Mini Envios",
+            "Jadlog",
+            "Loggi",
+            "J&T"
+          ]
+        },
+        "default": [
+          "PAC",
+          "SEDEX",
+          "Mini Envios"
+        ]
       },
       "hide": false
     },
@@ -147,6 +172,9 @@
                 "PAC",
                 "SEDEX",
                 "Mini Envios",
+                "Jadlog",
+                "Loggi",
+                "J&T",
                 "Todos"
               ],
               "default": "",
@@ -241,6 +269,9 @@
                 "PAC",
                 "SEDEX",
                 "Mini Envios",
+                "Jadlog",
+                "Loggi",
+                "J&T",
                 "Todos"
               ],
               "default": "",

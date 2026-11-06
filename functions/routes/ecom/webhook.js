@@ -1,6 +1,7 @@
 const getAppData = require('./../../lib/store-api/get-app-data')
 const Superfrete = require('./../../lib/superfrete/client')
 const { isSandbox } = require('../../__env')
+const { getServiceId } = require('./../../lib/superfrete/services')
 const { Timestamp, getFirestore } = require('firebase-admin/firestore')
 
 const SKIP_TRIGGER_NAME = 'SkipTrigger'
@@ -20,48 +21,73 @@ const getDocInFirestore = (documentId) => new Promise((resolve, reject) => {
     .catch(reject)
 })
 
-const parseAddress = (address, store) => {
-  console.log('>> ', JSON.stringify(address))
+const cut = (str, max) => (str ? String(str).trim().substring(0, max) : '')
+const onlyDigits = (str) => (str ? String(str).replace(/\D/g, '') : '')
+
+// https://superfrete.readme.io/reference/adicionar-frete-carrinho
+const parseAddress = (address = {}, store, isSender) => {
   let name = address.name
   if (!name) {
-    name = store?.name ? `${store.name} ${store.domain}` : '-'
+    name = store?.name || '-'
+  }
+  name = String(name).trim()
+  if (isSender && !/\s/.test(name)) {
+    // remetente deve ter nome completo (ao menos duas palavras)
+    name = `Loja ${name}`
   }
 
   const body = {
-    name,
-    address: address.street || store.address || '',
-    district: address.borough || 'Bairro',
-    state_abbr: address.province_code || 'MG',
-    postal_code: address.zip,
-    city: address.city || 'Cidade'
+    name: cut(name, 50),
+    address: cut(address.street || (typeof store?.address === 'string' ? store.address : ''), 50),
+    number: cut(address.number, 10),
+    district: cut(address.borough, 50) || 'NA',
+    city: cut(address.city, 50) || 'Cidade',
+    state_abbr: (address.province_code || 'MG').toUpperCase(),
+    postal_code: onlyDigits(address.zip).padStart(8, '0')
   }
 
-  if (address.number) {
-    body.number = `${address.number}`
-  }
-
-  if (body.complement) {
-    body.complement = address.complement
+  if (address.complement) {
+    body.complement = cut(address.complement, 20)
   }
 
   return body
 }
 
-const parseService = (label) => {
-  // 1: PAC, 2: SEDEX, 17: Mini Envios
-  if (label) {
-    switch (label.toLowerCase) {
-      case 'pac':
-        return 1
-      case 'sedex':
-        return 2
-      case 'mini envios':
-        return 17
-      default :
-        return 1
+const parsePhone = (phone) => {
+  let number = onlyDigits(phone?.number || phone)
+  if (number.length > 11 && number.startsWith('55')) {
+    number = number.substring(2)
+  }
+  return number.length >= 10 ? number : null
+}
+
+// procura etiqueta pendente recente com a tag do pedido
+// (a listagem da SuperFrete leva alguns segundos para incluir etiquetas novas)
+const findLabelByTag = async (superfreteApi, tag, postalCode, attempts = 3, delayMs = 4000) => {
+  const checked = new Set()
+  for (let i = 0; i < attempts; i++) {
+    if (i) await new Promise(resolve => setTimeout(resolve, delayMs))
+    try {
+      const { data } = await superfreteApi
+        .get('/me/orders?status=pending&per_page=20&order=desc&sort_by=created_at')
+      const minDate = Date.now() - 15 * 60 * 1000
+      const candidates = (data?.data || []).filter(item => {
+        return item.order_id && !checked.has(item.order_id) &&
+          (!postalCode || item.to?.postal_code === postalCode) &&
+          new Date(item.created_at).getTime() > minDate
+      })
+      for (const item of candidates) {
+        checked.add(item.order_id)
+        const { data: info } = await superfreteApi.get(`/order/info/${item.order_id}`)
+        if (Array.isArray(info?.tags) && info.tags.some(t => t.tag === tag)) {
+          return info
+        }
+      }
+    } catch (err) {
+      console.error('>> Failed to search Superfrete labels', err.response?.data || err.message)
     }
   }
-  return 1
+  return null
 }
 
 exports.post = ({ appSdk }, req, res) => {
@@ -121,14 +147,15 @@ exports.post = ({ appSdk }, req, res) => {
         status,
         fulfillment_status: fulfillmentStatus,
         shipping_lines: shippingLines,
-        items
-        // buyers
+        items,
+        buyers
       } = order
 
       const docId = `shippings/${storeId}_${orderId}`
       const doc = await getDocInFirestore(docId)
-      // const buyer = buyers && buyers[0]
-      const superfreteApi = new Superfrete(appData.token, isSandbox)
+      const buyer = buyers && buyers[0]
+      // criação de etiqueta pode passar de 10s (function tem limite de 60s)
+      const superfreteApi = new Superfrete(appData.token, isSandbox, { timeout: 25000 })
       console.log('>> OrderFirestore: ', JSON.stringify(doc))
 
       const shippingLine = shippingLines && shippingLines[0]
@@ -214,21 +241,36 @@ exports.post = ({ appSdk }, req, res) => {
             }
           })
 
-          const from = parseAddress(shippingLine.from, store)
-          // todo send email in to
+          const from = parseAddress(shippingLine.from, store, true)
           const to = parseAddress(shippingLine.to)
+          if (!shippingLine.to?.name && buyer) {
+            to.name = cut(buyer.display_name || buyer.name?.given_name || to.name, 50)
+          }
+          // documento do destinatário é necessário para DC-e
+          if (buyer?.doc_number) {
+            to.document = onlyDigits(buyer.doc_number)
+          }
+          to.email = buyer?.main_email || null
+          // telefone obrigatório para J&T (11 dígitos, sem formatação)
+          const phone = parsePhone(shippingLine.to?.phone) ||
+            parsePhone(buyer?.phones && buyer.phones[0])
+          if (phone) {
+            to.phone = phone
+          }
           const invoice = shippingLine.invoices && shippingLine.invoices[0]
 
           const body = {
             from,
             to,
-            service: parseService(shippingLine.app.label),
+            service: getServiceId(shippingLine),
             volumes,
             products,
             options: {
-              insurance_value: shippingLine.declared_value,
-              own_hand: shippingLine.own_hand,
-              receipt: shippingLine.receipt,
+              insurance_value: shippingLine.declared_value || null,
+              own_hand: Boolean(shippingLine.own_hand),
+              receipt: Boolean(shippingLine.receipt),
+              // sem NF-e: envio com declaração de conteúdo
+              non_commercial: !invoice,
               tags: [
                 {
                   tag: orderId
@@ -240,23 +282,30 @@ exports.post = ({ appSdk }, req, res) => {
 
           if (invoice) {
             const { number, access_key: key } = invoice
-            body.options.invoice = { number, key }
+            body.options.invoice = { number: String(number || ''), key }
           }
 
           console.log('>> Try ', JSON.stringify(body))
-          const { data } = await superfreteApi.post('/cart', body)
-            .then(({ data }) => {
-              const id = data.id
-              return superfreteApi.get(`/order/info/${id}`)
-            })
-            .catch((err) => {
+          const label = await superfreteApi.post('/cart', body)
+            .then(({ data }) => data)
+            .catch(async (err) => {
               if (err.response) {
-                console.log(err.response.data)
-              } else {
-                console.error(err)
+                console.error('>> Superfrete cart error', JSON.stringify(err.response.data))
+                throw err
+              }
+              // timeout/rede: a etiqueta pode ter sido criada mesmo sem resposta,
+              // procura antes de falhar para não duplicar no próximo disparo
+              console.error('>> Superfrete cart without response', err.message)
+              const found = await findLabelByTag(superfreteApi, orderId, to.postal_code)
+              if (found) {
+                console.log('>> Recovered label', found.id)
+                return found
               }
               throw err
             })
+          const data = await superfreteApi.get(`/order/info/${label.id}`)
+            .then(({ data }) => data)
+            .catch(() => label)
 
           const createdAt = Timestamp.now()
 

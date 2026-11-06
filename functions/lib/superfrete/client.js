@@ -3,7 +3,7 @@ const axios = require('axios')
 // https://superfrete.readme.io/reference/primeiros-passos
 
 class Superfrete {
-  constructor (token, isSandbox) {
+  constructor (token, isSandbox, { timeout = 10000 } = {}) {
     if (!token) {
       throw new Error('Missing token')
     }
@@ -15,9 +15,11 @@ class Superfrete {
       headers: {
         'Content-Type': 'application/json',
         accept: 'application/json',
-        Authorization: `Bearer ${token}`
+        Authorization: `Bearer ${token}`,
+        // header obrigatório: "Nome da aplicação e versão (email de contato)"
+        'User-Agent': process.env.SUPERFRETE_USER_AGENT || 'E-Com Plus App Superfrete/1.0 (ti@e-com.club)'
       },
-      timeout: 10000
+      timeout
     })
   }
 
