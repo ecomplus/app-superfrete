@@ -191,7 +191,14 @@ const checkTracking = async ({ appSdk, storeId }) => {
     const superfreteApi = new Superfrete(token, isSandbox)
     let i = 0
     while (i < shippingsDoc.length) {
-      promises.push(handleShipping({ appSdk, storeId, auth }, superfreteApi, shippingsDoc[i]))
+      const { orderId } = shippingsDoc[i]
+      // isola a falha de um pedido para não derrubar os demais da loja
+      promises.push(
+        handleShipping({ appSdk, storeId, auth }, superfreteApi, shippingsDoc[i])
+          .catch((err) => {
+            console.error(`>> Failed to handle order ${orderId}`, err.response?.data || err.message)
+          })
+      )
       i += 1
     }
   }

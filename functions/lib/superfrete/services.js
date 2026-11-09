@@ -47,6 +47,9 @@ const getServiceId = (shippingLine) => {
       if (service) return service.id
     }
   }
+  // serviço não reconhecido: assume PAC, mas registra para diagnóstico
+  console.warn('>> Superfrete serviço não reconhecido, usando PAC (1):',
+    JSON.stringify({ label: app.label, service_code: app.service_code }))
   return 1
 }
 

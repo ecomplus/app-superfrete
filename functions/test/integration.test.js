@@ -485,6 +485,22 @@ const test = async (name, fn) => {
     assert.strictEqual(state.sfCalls.filter(c => c.url === '/cart').length, 1)
   })
 
+  await test('webhook: recuperação casa o CEP mesmo com traço na listagem', async () => {
+    state.appData.status_send_order = 'Pronto Para Envio'
+    const order = baseOrder({})
+    state.ecomOrders[order._id] = order
+    state.sfHandlers['post ^/cart$'] = () => { throw Object.assign(new Error('timeout of 25000ms exceeded'), { code: 'ECONNABORTED' }) }
+    state.sfHandlers['get ^/me/orders'] = () => ({
+      data: { data: [{ order_id: 'SFX', created_at: new Date().toISOString(), to: { postal_code: '30140-071' } }], meta: {} }
+    })
+    state.sfHandlers['get ^/order/info/SFX$'] = () => ({ data: { id: 'SFX', status: 'pending', tags: [{ tag: 'ord1' }] } })
+    const { res, done } = fakeRes()
+    await quiet(async () => { webhook.post({ appSdk }, { storeId: 1011, body: { resource: 'orders', resource_id: 'ord1' } }, res); await done })
+    const r = await done
+    assert.strictEqual(r.body, 'SUCCESS')
+    assert.strictEqual(state.fsDocs['shippings/1011_ord1'].id, 'SFX')
+  })
+
   await test('webhook: erro de validação do /cart (com resposta) não tenta recuperar', async () => {
     state.appData.status_send_order = 'Pronto Para Envio'
     const order = baseOrder({})

@@ -65,6 +65,8 @@ const parsePhone = (phone) => {
 // (a listagem da SuperFrete leva alguns segundos para incluir etiquetas novas)
 const findLabelByTag = async (superfreteApi, tag, postalCode, attempts = 3, delayMs = 4000) => {
   const checked = new Set()
+  // normaliza o CEP para comparar só dígitos (a listagem pode devolver com traço)
+  const zip = onlyDigits(postalCode)
   for (let i = 0; i < attempts; i++) {
     if (i) await new Promise(resolve => setTimeout(resolve, delayMs))
     try {
@@ -73,7 +75,7 @@ const findLabelByTag = async (superfreteApi, tag, postalCode, attempts = 3, dela
       const minDate = Date.now() - 15 * 60 * 1000
       const candidates = (data?.data || []).filter(item => {
         return item.order_id && !checked.has(item.order_id) &&
-          (!postalCode || item.to?.postal_code === postalCode) &&
+          (!zip || onlyDigits(item.to?.postal_code) === zip) &&
           new Date(item.created_at).getTime() > minDate
       })
       for (const item of candidates) {
@@ -250,7 +252,9 @@ exports.post = ({ appSdk }, req, res) => {
           if (buyer?.doc_number) {
             to.document = onlyDigits(buyer.doc_number)
           }
-          to.email = buyer?.main_email || null
+          if (buyer?.main_email) {
+            to.email = buyer.main_email
+          }
           // telefone obrigatório para J&T (11 dígitos, sem formatação)
           const phone = parsePhone(shippingLine.to?.phone) ||
             parsePhone(buyer?.phones && buyer.phones[0])
@@ -266,7 +270,6 @@ exports.post = ({ appSdk }, req, res) => {
             volumes,
             products,
             options: {
-              insurance_value: shippingLine.declared_value || null,
               own_hand: Boolean(shippingLine.own_hand),
               receipt: Boolean(shippingLine.receipt),
               // sem NF-e: envio com declaração de conteúdo
@@ -278,6 +281,10 @@ exports.post = ({ appSdk }, req, res) => {
               ]
             },
             platform: 'e-com.plus'
+          }
+
+          if (shippingLine.declared_value) {
+            body.options.insurance_value = shippingLine.declared_value
           }
 
           if (invoice) {
