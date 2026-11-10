@@ -12,6 +12,29 @@ const { Timestamp, getFirestore } = require('firebase-admin/firestore')
   delivered = Entregue.
 // */
 
+// ordem do fluxo de entrega na E-Com Plus, para nunca regredir o status
+// (ex.: etiqueta `pending` não pode voltar pedido "Pronto para envio" para "Em separação")
+const FULFILLMENT_FLOW = [
+  'in_production',
+  'in_separation',
+  'invoice_issued',
+  'ready_for_shipping',
+  'partially_shipped',
+  'shipped',
+  'partially_delivered',
+  'delivered'
+]
+
+const isForwardStatus = (current, next) => {
+  if (!current) return true
+  if (current === next) return false
+  const currentIndex = FULFILLMENT_FLOW.indexOf(current)
+  const nextIndex = FULFILLMENT_FLOW.indexOf(next)
+  // status fora do fluxo (ex.: devolução) não é sobrescrito
+  if (currentIndex === -1 || nextIndex === -1) return false
+  return nextIndex > currentIndex
+}
+
 const parseStatus = (status) => {
   switch (status) {
     case 'pending':
@@ -53,47 +76,58 @@ const handleShipping = async ({ appSdk, storeId, auth }, superfreteApi, shipping
   const { shipping_lines: shippingLines } = order
   const shippingLine = shippingLines && shippingLines[0]
 
-  const { data } = await superfreteApi.get(`/order/info/${id}`)
-    .catch(() => null)
+  const data = await superfreteApi.get(`/order/info/${id}`)
+    .then(({ data }) => data)
+    .catch((err) => {
+      console.error(`>> Failed to get SuperFrete order ${id}`, err.response?.data || err.message)
+      return null
+    })
+  if (!data) {
+    return null
+  }
 
   const docId = `shippings/${storeId}_${orderId}`
-  // console.log('>> ', docId, JSON.stringify(data))
   let response = data
   const promises = []
 
   if (data.status === 'pending') {
+    // paga a etiqueta com o saldo da carteira SuperFrete
     response = await superfreteApi.post('/checkout', { orders: [id] })
       .then(async () => {
         const { data } = await superfreteApi.get(`/order/info/${id}`)
         return data
       })
-
-    if (response.tracking && shippingLine) {
-      // update order and add traking code
-      const trackingCode = data.tracking
-      const trackingCodes = shippingLine.tracking_codes || []
-      trackingCodes.push({
-        code: trackingCode
+      .catch((err) => {
+        console.error(`>> Failed checkout for SuperFrete order ${id}`, err.response?.data || err.message)
+        return data
       })
-      promises.push(
-        appSdk.apiRequest(
-          storeId,
-          `/orders/${orderId}/shipping_lines/${shippingLine._id}.json`,
-          'PATCH',
-          { tracking_codes: trackingCodes },
-          auth
-        )
+  }
+
+  // rastreio só é disponibilizado a partir do status `released`
+  const trackingCode = response.tracking
+  const trackingCodes = (shippingLine && shippingLine.tracking_codes) || []
+  if (trackingCode && shippingLine && !trackingCodes.some(({ code }) => code === trackingCode)) {
+    trackingCodes.push({
+      code: trackingCode
+    })
+    promises.push(
+      appSdk.apiRequest(
+        storeId,
+        `/orders/${orderId}/shipping_lines/${shippingLine._id}.json`,
+        'PATCH',
+        { tracking_codes: trackingCodes },
+        auth
       )
-    }
+    )
   }
 
   if (response) {
-    if (response.status && response.status !== 'canceled') {
+    if (response.status && !['canceled', 'cancelled'].includes(response.status)) {
       const fulfillmentStatus = parseStatus(response.status)
       const dateNow = new Date()
       if (
         fulfillmentStatus &&
-            (!order.fulfillment_status || order.fulfillment_status.current !== fulfillmentStatus)
+        isForwardStatus(order.fulfillment_status && order.fulfillment_status.current, fulfillmentStatus)
       ) {
         console.log('>> update fulfillment status: ', fulfillmentStatus)
         promises.push(
@@ -141,7 +175,7 @@ const checkTracking = async ({ appSdk, storeId }) => {
     if (docSnapshot.exists) {
       const docData = await docSnapshot.ref.get()
       const doc = docData.data()
-      if (!['delivered', 'canceled'].includes(doc.status)) {
+      if (!['delivered', 'canceled', 'cancelled'].includes(doc.status)) {
         shippingsDoc.push(doc)
       }
     }
@@ -157,7 +191,14 @@ const checkTracking = async ({ appSdk, storeId }) => {
     const superfreteApi = new Superfrete(token, isSandbox)
     let i = 0
     while (i < shippingsDoc.length) {
-      promises.push(handleShipping({ appSdk, storeId, auth }, superfreteApi, shippingsDoc[i]))
+      const { orderId } = shippingsDoc[i]
+      // isola a falha de um pedido para não derrubar os demais da loja
+      promises.push(
+        handleShipping({ appSdk, storeId, auth }, superfreteApi, shippingsDoc[i])
+          .catch((err) => {
+            console.error(`>> Failed to handle order ${orderId}`, err.response?.data || err.message)
+          })
+      )
       i += 1
     }
   }

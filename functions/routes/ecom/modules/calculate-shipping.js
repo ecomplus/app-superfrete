@@ -1,6 +1,13 @@
 const Superfrete = require('./../../../lib/superfrete/client')
 const ecomUtils = require('@ecomplus/utils')
 const { isSandbox } = require('./../../../__env')
+const { getEnabledServiceIds, getServiceLabel } = require('./../../../lib/superfrete/services')
+
+// valores mínimos usados quando o produto não tem peso/dimensões cadastrados
+// (a SuperFrete arredonda para a caixa mínima de cada serviço)
+const DEFAULT_KG_WEIGHT = 0.1
+const DEFAULT_CM_DIMENSION = 1
+const CM_SIDES = ['height', 'width', 'length']
 
 const checkZipCode = (destinationZip, rule) => {
   // validate rule zip range
@@ -16,7 +23,7 @@ const isDisabledService = (destinationZip, disableServices, shipping) => {
     for (let i = 0; i < disableServices.length; i++) {
       const rule = disableServices[i]
       if (rule && checkZipCode(destinationZip, rule) &&
-        (rule.service === 'Todos' || rule.service === shipping.name)) {
+        (rule.service === 'Todos' || rule.service === shipping.label || rule.service === shipping.name)) {
         return true
       }
     }
@@ -32,7 +39,7 @@ const applyShippingDiscount = (destinationZip, totalItems, shippingRules, shippi
       if (
         rule &&
         checkZipCode(destinationZip, rule) &&
-        (rule.service === 'Todos' || rule.service === shipping.name) &&
+        (rule.service === 'Todos' || rule.service === shipping.label || rule.service === shipping.name) &&
         totalItems >= rule.min_amount
       ) {
         if (rule.free_shipping) {
@@ -140,7 +147,7 @@ exports.post = async ({ appSdk }, req, res) => {
     to: {
       postal_code: zipTo
     },
-    services: '1,2,17'
+    services: getEnabledServiceIds(appData.services)
   }
 
   let kgWeightBiggerBox = 0
@@ -206,6 +213,16 @@ exports.post = async ({ appSdk }, req, res) => {
         }
       }
 
+      // a API rejeita a cotação inteira se algum produto não tiver peso ou dimensões
+      if (!product.weight) {
+        product.weight = DEFAULT_KG_WEIGHT
+        kgWeightBiggerBox += DEFAULT_KG_WEIGHT * quantity
+      }
+      CM_SIDES.forEach(side => {
+        if (!product[side]) {
+          product[side] = DEFAULT_CM_DIMENSION
+        }
+      })
       products.push(product)
     }
   })
@@ -213,7 +230,11 @@ exports.post = async ({ appSdk }, req, res) => {
   if (products.length && !appData.use_bigger_box) {
     Object.assign(body, { products })
   } else {
-    Object.assign(body, { package: { ...cmDimensionsBiggerBox, weight: kgWeightBiggerBox } })
+    const pkg = { weight: kgWeightBiggerBox || DEFAULT_KG_WEIGHT }
+    CM_SIDES.forEach(side => {
+      pkg[side] = cmDimensionsBiggerBox[side] || DEFAULT_CM_DIMENSION
+    })
+    Object.assign(body, { package: pkg })
   }
 
   if (ownHand || receipt) {
@@ -232,7 +253,8 @@ exports.post = async ({ appSdk }, req, res) => {
     const { data } = await superfreteApi.post('/calculator', body)
 
     data.forEach(shipping => {
-      if (!shipping.error) {
+      shipping.label = getServiceLabel(shipping.id, shipping.name)
+      if (!shipping.has_error && !shipping.error && shipping.price) {
         if (!isDisabledService(zipTo, appData.disable_services, shipping)) {
           let totalPrice = applyShippingDiscount(zipTo, totalItems, appData.shipping_rules, shipping)
           if (appData.additional_price && totalPrice) {
@@ -263,13 +285,17 @@ exports.post = async ({ appSdk }, req, res) => {
               days: 3,
               ...appData.posting_deadline
             },
-            flags: ['superfrete-ws']
+            flags: ['superfrete-ws'],
+            custom_fields: [{
+              field: 'superfrete_service_id',
+              value: String(shipping.id)
+            }]
           }
           const service = {
-            label: shipping.name,
-            carrier: shipping.company.name,
+            label: shipping.label,
+            carrier: shipping.company?.name || shipping.label,
             service_name: 'Superfrete',
-            service_code: `Superfrete_${shipping.name}`,
+            service_code: `Superfrete_${shipping.label}`,
             shipping_line: shippingLine
           }
 
@@ -322,10 +348,10 @@ exports.post = async ({ appSdk }, req, res) => {
 
     return res.send(response)
   } catch (err) {
-    // console.error(err)
+    console.error('>> Superfrete calculator error', JSON.stringify(err.response?.data || err.message), JSON.stringify(body))
     return res.status(409).send({
       error: 'CALCULATE_FAILED',
-      message: response?.data?.[0]?.txErro || err.message
+      message: err.response?.data?.message || err.message
     })
   }
 }
